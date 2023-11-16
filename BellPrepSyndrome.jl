@@ -1,32 +1,33 @@
 #!/usr/licensed/julia/1.7/bin/julia
 """
-Module for state preparation of Bell tree multitree, under independent X/Z noise
+Module for decoding state preparation of Bell tree multitree, 
+with a local independent X/Z noise model
 uses reduced bond dimension since everything is essentially classical
-This version reads in syndrome data from elsewhere
+Reads in syndrome and erasure data from elsewhere
 """
 module BellPrepSyndrome
 
 using Base.Threads
-using BellTreeStatePrep
-using ProbabilityPassingDecoder
-using BellTreeFaults
-using CodingExtensions # match_syndrome
-using SteanePrep # get_system_idxs
-using FieldConversions
 using Nemo
+
+# my code
+using BellTreeTensors
+using BellTreeFaults
+using BinaryFields # bool_to_nemo, match_syndrome
 
 export process_syndrome, prep_syndrome_decoder, level_bell_syndrome_decoder, expand_checks
 
 export BellPrepParams
 struct BellPrepParams
-    stacked_params::Array
-    final_params::StackedPerfectBell
-    level_params::Array{LevelParams}
-    anc_flips::Array
-    check_times::AbstractArray
+    stacked_params::Array # parameters of stacked tree
+    final_params::StackedPerfectBell # parameters of stacked tree in final level (direct syndrome measurements)
+    level_params::Array{LevelParams} # parameters of bare trees at each level
+    anc_flips::Array # ancilla bit flips (all zeros)
+    check_times::AbstractArray # times when matching syndrome is measured
     log_state::Int # which logical state is being prepared
+
     function BellPrepParams(tmax; log_state::Int = 1, measure_first::Int = 1, alternate::Bool = true)
-        if alternate
+        if alternate # alternate X and Z checks, so the "matching stabilizers" are always measured
 	    check_times = 1:tmax-1
 	    @assert measure_first==log_state
 	else
@@ -42,12 +43,22 @@ struct BellPrepParams
     end
 end
 
+export prepare_check_idxs, convert_outcomes
+
+function get_system_idxs(tmax)
+    system_idxs = [1]
+    for t=1:tmax
+        system_idxs = vcat(2 .* system_idxs .- 1, 2 .* system_idxs)
+    end
+    system_idxs
+end
+
 function prepare_check_idxs(tmax)
-    idxs = [expand_checks(tmax; nmin = t) for t=1:tmax]
+    tree_idxs = [expand_checks(tmax; nmin = t) for t=1:tmax]
     # we could reverse engineer this from sys_idxs, but let's not bother
-    my_idxs=[[findall(isequal(t), idxs[i]) for i=1:t] for t=1:tmax]
+    match_idxs =[[findall(isequal(t), tree_idxs[i]) for i=1:t] for t=1:tmax]
     sys_idxs = vcat([[1]], [get_system_idxs(t) for t=0:tmax])
-    idxs, my_idxs, sys_idxs
+    match_idxs, sys_idxs
 end
 
 function expand_checks(n; nmin = 1)
@@ -58,28 +69,32 @@ function expand_checks(n; nmin = 1)
     checks
 end
 
+export convert_outcomes
 function convert_outcomes(shot, t)
     outcomes = vcat([shot[2^t+1+(j-1)*2^(t-1):2^t+j*2^(t-1)] for j=1:t-1], [shot[1:2^t]])
 end
 
-function process_syndrome(outcomes, par_checks, idxs, check_times)
-    # Here's where I will read in the measurement outcomes, compute the syndromes
+# Given measurement outcomes (ordered by qubits), compute the syndromes associated with each subtree
+function process_syndrome(outcomes, par_checks, tree_idxs, sub_idxs, check_times)
     tmax = length(outcomes)
     syndromes = [[gfp_mat[] for i=1:t-1] for t=2:tmax]
-    for t=check_times
-        sys_idxs = get_system_idxs(t)
-        for j=1:2^(tmax-t-1)
-	    push!(syndromes[idxs[t][j]][t], par_checks[t] * bool_to_nemo((outcomes[t][((j-1) * 2^t + 1):j*2^t])[sys_idxs,:]))
+    for t=1:tmax-1
+        for i=check_times
+	    if i>t
+	        break
+	    end
+	    syndromes[t][i] = [par_checks[i] * bool_to_nemo((outcomes[i][((j-1) * 2^i+1):j*2^i][sub_idxs[i+2],:])) for j=tree_idxs[t+1][i+1][sub_idxs[end-t-2]]]
 	end
     end
-    last_syndrome = par_checks[end] * bool_to_nemo(outcomes[end][get_system_idxs(tmax),:])
+
+    # measure just the stabilizers, keep the logical syndrome bit aside
+    last_syndrome = par_checks[end] * bool_to_nemo(outcomes[end][sub_idxs[end],:])
     push!(syndromes[end], [last_syndrome[1:end-1,:]])
     syndromes, (last_syndrome[end,end]==1)
 end
 
-function prep_syndrome_decoder(counts, probs; erasure_f = 0)
-    @assert erasure_f==0 # haven't implemented erasure_f > 0 yet
-    err_probs, _ = initialize_level_errors(counts, probs; erasure_f = erasure_f, func = initialize_error_probs)
+function prep_syndrome_decoder(counts, probs)
+    err_probs, _ = initialize_level_errors(counts, probs; erasure_f = 0, func = initialize_error_probs)
     err_probs
 end
 
@@ -126,7 +141,7 @@ function level_bell_syndrome_decoder(bell_params, error_probs, syndromes)
     # now use the syndrome info from earlier levels
     # don't need to apply update in level tmax-1, because there's only one system
     for t=1:tmax-2
-        check_t = BellPrepSyndrome.bayesian_update_level!(bell_params, error_probs, syndromes[t])
+        check_t = bayesian_update_level!(bell_params, error_probs, syndromes[t])
 	@assert check_t>=t-1
 	if check_t==t-1 # the last layer where these ancillas could have been updated, they (and all deeper blocks) instead got leaked errors
 	    update_leaked_level_probs!(error_probs[t:end], t; log_state = bell_params.log_state)
@@ -147,7 +162,6 @@ function level_bell_syndrome_decoder(bell_params, error_probs, syndromes)
     final_probs, log_bit
 end
 
-# BellTreeStatePrep
 function track_spacetime_syndrome(bitflips, paulis, anc_flips, par_checks, check_times)
     tmax = length(bitflips[1])
 
@@ -167,6 +181,7 @@ function track_spacetime_syndrome(bitflips, paulis, anc_flips, par_checks, check
     end
 end
 
+# get syndrome at each level, leak errors from ancilla to system
 function get_spacetime_syndrome(bitflips, paulis, par_checks, check_times)
     tmax = length(par_checks)
     syndromes = [[gfp_mat[] for i=1:t-1] for t=2:tmax]
@@ -216,14 +231,14 @@ function bayesian_update_level!(bell_params::BellPrepParams, error_probs, syndro
     check_t = bell_params.check_times[idx]
     @threads for i=1:new_anc
         bitflips, _ = match_spacetime_syndrome([get_index(syndrome; i= i) for syndrome in syndromes], bell_params.final_params.par_checks[1:t], bell_params.level_params[t].counts; logical = false)
-        BellTreeStatePrep.bayesian_update_pair!(bell_params.stacked_params[idx], bell_params.level_params, [error_probs[tt][i] for tt=1:t+1], vcat(bell_params.anc_flips[1:t],[bitflips]), check_t)
+        bayesian_update_pair!(bell_params.stacked_params[idx], bell_params.level_params, [error_probs[tt][i] for tt=1:t+1], vcat(bell_params.anc_flips[1:t],[bitflips]), check_t)
     end
     check_t
 end
 
 function match_spacetime_syndrome(syndrome, par_checks, counts; logical::Bool = true)
 
-    # now match the spacetime syndrome using errors only on system
+    # match the spacetime syndrome using errors only on system
     matching_errs = Vector{Vector{Bool}}(undef, length(par_checks))
     
     prop_err = zeros(Bool, 2)
@@ -298,7 +313,7 @@ function initialize_error_prob_stacks(error_probs, erasures, sub_idxs, idxs)
     error_probs 
 end
 
-function initialize_error_probs(counts, probs; erasure_f = 0, measurement_error::Bool = true)
+function initialize_error_probs(counts, probs; erasure_f = 0, perfect_last::Bool = false)
     @assert erasure_f==0
     # state prep errors
     error_probs = [[Array{Array}(undef, counts[i][t]) for t=1:length(counts[i])] for i=1:3]
@@ -317,7 +332,7 @@ function initialize_error_probs(counts, probs; erasure_f = 0, measurement_error:
 
 	measure_stuff = [[1-pp,pp] for i=1:counts[end][1]]
 	error_probs = vcat(error_probs, [[measure_stuff]])
-    elseif measurement_error # SPECIAL CASE: measurements at end anyway, so concatenate still
+    elseif !perfect_last # SPECIAL CASE: measurements at end anyway, so concatenate still
        	pp = probs[2] + probs[4] - 2*probs[2]*probs[4]
 	error_probs[2][end] = [[1-pp,pp] for i=1:counts[2][end]]
     end
