@@ -1,7 +1,31 @@
-#= from https://www.tensors.net/code with some modifications =#
+"""
+Tensor network contraction, from [tensors.net](https://www.tensors.net/code) 
+with some modifications
+"""
 module TensorExtensions
 
 export ncon!, tropical_matrix_mult, normalize_mult
+
+"""
+Matrix multiplication according to "tropical algebra"
+"+" is min
+"x" is add
+"""
+function tropical_matrix_mult(A, B)
+  C = [minimum([A[i,k] + B[k,j] for k=1:size(A,2)]) for i=1:size(A,1), j=1:size(B,2)]
+end
+
+"""
+Matrix multiplication followed by normalization
+Use this to avoid getting super tiny numbers in the TN contraction
+"""
+function normalize_mult(A, B)
+  C = A * B
+  # assumes all positive entries
+  maxC = maximum(C)
+  @assert maxC != 0
+  C ./ maxC
+end
 
 """
     ncon_net(tensor_list, connect_list_in; order=[], check_network=true)
@@ -120,18 +144,6 @@ function ncon!(
   else
     return tensor_list[1][1]
   end
-end
-
-function tropical_matrix_mult(A, B)
-  C = [minimum([A[i,k] + B[k,j] for k=1:size(A,2)]) for i=1:size(A,1), j=1:size(B,2)]
-end
-
-function normalize_mult(A, B)
-  C = A * B
-  # assumes all positive entries
-  maxC = maximum(C)
-  @assert maxC != 0
-  C ./ maxC
 end
 
 """
