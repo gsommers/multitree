@@ -15,3 +15,5 @@ External dependencies
 ---------------------
  - `QuantumClifford` (for stabilizer formalism)
   - `Nemo` (for finite fields)
+
+The module `TensorExtensions.jl` is mostly copied from the code [here](https://www.tensors.net/code), a Julia implementation of the MATLAB function [NCON](https://arxiv.org/abs/1402.0939), modified to allow for alternative definitions of "multiplication" (see the functions `tropical_matrix_mult`, `normalize_mult`).
