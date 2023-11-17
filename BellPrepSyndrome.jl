@@ -7,6 +7,7 @@ Reads in syndrome and erasure data from elsewhere
 """
 module BellPrepSyndrome
 
+# external code
 using Base.Threads
 using Nemo
 
@@ -15,14 +16,18 @@ using BellTreeTensors
 using BellTreeFaults
 using BinaryFields # bool_to_nemo, match_syndrome
 
-export process_syndrome, prep_syndrome_decoder, level_bell_syndrome_decoder, expand_checks
-
 export BellPrepParams
+
+"""
+Wraps together all the parameters needed for stacked decoding of state preparation
+Same for all runs (doesn't depend on noise)
+"""
 struct BellPrepParams
     stacked_params::Array # parameters of stacked tree
     final_params::StackedPerfectBell # parameters of stacked tree in final level (direct syndrome measurements)
     level_params::Array{LevelParams} # parameters of bare trees at each level
-    anc_flips::Array # ancilla bit flips (all zeros)
+    error_bases::Array # basis for "matching type" errors that propagate through Bell tree
+    anc_flips::Array # ancilla bit flips (all zeros) (we always put error on "system" side)
     check_times::AbstractArray # times when matching syndrome is measured
     log_state::Int # which logical state is being prepared
 
@@ -39,11 +44,13 @@ struct BellPrepParams
 
 	final_params = StackedPerfectBell(tmax; log_state = log_state, measure_first = measure_first, alternate = alternate)
 	anc_flips = [[[zeros(Bool, lp.counts[i][t]) for t=1:length(lp.counts[i])] for i=1:4] for lp in level_params]
-	new(stacked_params, final_params, level_params, anc_flips, check_times, log_state)
+	error_bases = [prepare_error_basis(t; basis = log_state) for t=1:tmax-1]
+	new(stacked_params, final_params, level_params, error_bases, anc_flips, check_times, log_state)
     end
 end
 
-export prepare_check_idxs, convert_outcomes
+#= Process data from circuit into blocks at different levels =#
+export process_syndrome, prepare_check_idxs, convert_outcomes
 
 function get_system_idxs(tmax)
     system_idxs = [1]
@@ -69,12 +76,13 @@ function expand_checks(n; nmin = 1)
     checks
 end
 
-export convert_outcomes
 function convert_outcomes(shot, t)
     outcomes = vcat([shot[2^t+1+(j-1)*2^(t-1):2^t+j*2^(t-1)] for j=1:t-1], [shot[1:2^t]])
 end
 
-# Given measurement outcomes (ordered by qubits), compute the syndromes associated with each subtree
+"""
+ Given measurement outcomes (ordered by qubits), compute the syndromes associated with each subtree
+"""
 function process_syndrome(outcomes, par_checks, tree_idxs, sub_idxs, check_times)
     tmax = length(outcomes)
     syndromes = [[gfp_mat[] for i=1:t-1] for t=2:tmax]
@@ -93,6 +101,11 @@ function process_syndrome(outcomes, par_checks, tree_idxs, sub_idxs, check_times
     syndromes, (last_syndrome[end,end]==1)
 end
 
+#= Functions to initialize error probabilities, generate errors =#
+
+"""
+Initialize error probabilities, unheralded part of noise
+"""
 function prep_syndrome_decoder(counts, probs)
     err_probs, _ = initialize_level_errors(counts, probs; erasure_f = 0, func = initialize_error_probs)
     err_probs
@@ -109,59 +122,84 @@ function generate_flips(err_probs)
     flips
 end
 
+"""
+Sample bit flips according to the specified error probabilities, for all blocks of the multitree
+"""
 function prep_bitflips(err_probs)
     bitflips = [[[Vector{Vector{Bool}}([generate_flips(err_probs[i][j][k][m]) for m=1:length(err_probs[i][j][k])]) for k=1:length(err_probs[i][j])] for j=1:length(err_probs[i])] for i=1:length(err_probs)]
 end
 
-function update_leaked_level_probs!(error_probs, t; log_state::Int = 1)
-    block_lengths = vcat([0], cumsum(length.(error_probs[2:end])))
-    @threads for block_i=2:length(error_probs)
-        @threads for i=1:length(error_probs[block_i])
-	    b_i = block_lengths[block_i-1] + i
-	    update_leaked_probs!(error_probs[block_i][i][3][t], error_probs[1][b_i]; log_state = log_state, parity = log_state)
-	end
-    end
-end
-
-function get_index(arr; i::Int = 1)
-    if isempty(arr)
-        return []
-    else
-        return arr[i]
-    end
-end
-
-function level_bell_syndrome_decoder(bell_params, error_probs, syndromes)
-
-    final_params = bell_params.final_params
-    tmax = length(final_params.par_checks)
-    
-    err_s, log_bit = match_spacetime_syndrome([get_index(syndrome) for syndrome in syndromes[end]], final_params.par_checks, final_params.level_params.counts; logical = true)
-
-    # now use the syndrome info from earlier levels
-    # don't need to apply update in level tmax-1, because there's only one system
-    for t=1:tmax-2
-        check_t = bayesian_update_level!(bell_params, error_probs, syndromes[t])
-	@assert check_t>=t-1
-	if check_t==t-1 # the last layer where these ancillas could have been updated, they (and all deeper blocks) instead got leaked errors
-	    update_leaked_level_probs!(error_probs[t:end], t; log_state = bell_params.log_state)
-	end
-    	# clear away ancillae that have been used now
-    	for tt=1:t
-            error_probs[tt] = error_probs[tt][length(error_probs[t+1]) + 1:end]
-        end
-    end
-
-    # check I updated things properly for order 1 stacking
+"""
+Modify prior probabilities using info of heralded locations
+Only gate and measurement errors get heralded
+erasures[1] -> heralding after encoding gate
+erasures[2] -> heralding after check gate
+erasures[3] -> heralded measurement error
+"""
+function initialize_error_prob_stacks(error_probs, erasures, sub_idxs, idxs)
+    tmax = length(error_probs)
     for t=1:tmax
-        @assert length(error_probs[t])==1
+        println(t)
+        for i=1:t	    
+	    for j=1:length(idxs[t][1])
+	        for qb_i=1:2^i
+		    if erasures[1][i][(idxs[t][i][j]-1)*2^i+qb_i]
+		        error_probs[t][sub_idxs[end-t-1][end-j+1]][2][i][sub_idxs[i+2][qb_i]] = [0.5, 0.5]
+		    end
+		    
+		    if i<t && erasures[2][i][(idxs[t][i+1][j]-1)*2^i+qb_i]
+		        error_probs[t][sub_idxs[end-t-1][end-j+1]][3][i][sub_idxs[i+3][2*qb_i-1]] = [0.5,0.5] # also post-check-gate errors
+		    end
+		    
+		end
+	    end
+	end
+	if t==tmax
+	    err_i = 2
+	else
+	    err_i = 4
+	end
+	for j=1:length(sub_idxs[end-t-1])
+	    for qb_i=1:2^t
+	        if erasures[3][t][qb_i]
+		    error_probs[t][sub_idxs[end-t-1][end-j+1]][err_i][end][sub_idxs[t+2][qb_i]] = [0.5, 0.5] # measurement errors
+		end
+	    end
+	end
     end
-    
-    # last level: leave logical leg open
-    final_probs = last_level_bell_decode(final_params, bell_params.level_params, [error_probs[i][end] for i=1:tmax], vcat(bell_params.anc_flips, [err_s]))
-    final_probs, log_bit
+    error_probs 
 end
 
+# Only initialize the probabilities, don't sample bitflips
+function initialize_error_probs(counts, probs; erasure_f = 0, perfect_last::Bool = false)
+    @assert erasure_f==0
+    # state prep errors
+    error_probs = [[Array{Array}(undef, counts[i][t]) for t=1:length(counts[i])] for i=1:3]
+
+    for i=1:3
+    	for t=1:length(counts[i])
+	    for j=1:counts[i][t]
+	        error_probs[i][t][j] = [1-probs[i], probs[i]]
+	    end
+	end
+    end
+
+    # if this is an ancilla block, it will also have measurement errors
+    if length(counts)>3
+	pp = probs[3] + probs[4] - 2 * probs[3]*probs[4]
+
+	measure_stuff = [[1-pp,pp] for i=1:counts[end][1]]
+	error_probs = vcat(error_probs, [[measure_stuff]])
+    elseif !perfect_last # SPECIAL CASE: measurements at end anyway, so concatenate still
+       	pp = probs[2] + probs[4] - 2*probs[2]*probs[4]
+	error_probs[2][end] = [[1-pp,pp] for i=1:counts[2][end]]
+    end
+    return error_probs, []
+end
+
+#= Functions to match syndrome, or get spacetime syndrome of specified error pattern =#
+
+# get syndrome of errors in this block
 function track_spacetime_syndrome(bitflips, paulis, anc_flips, par_checks, check_times)
     tmax = length(bitflips[1])
 
@@ -220,25 +258,9 @@ function get_spacetime_syndrome(bitflips, paulis, par_checks, check_times)
     syndromes, (last_syndrome[end,end]==1)
 end
 
-function bayesian_update_level!(bell_params::BellPrepParams, error_probs, syndromes)
-    t = length(syndromes)
-    # only update the stuff that will become an ancilla in the next block
-    new_anc = length(error_probs[t+1])
-    idx = searchsortedlast(bell_params.check_times, t)
-    if idx==0 # nothing learned from this guy
-        return 0
-    end
-    check_t = bell_params.check_times[idx]
-    @threads for i=1:new_anc
-        bitflips, _ = match_spacetime_syndrome([get_index(syndrome; i= i) for syndrome in syndromes], bell_params.final_params.par_checks[1:t], bell_params.level_params[t].counts; logical = false)
-        bayesian_update_pair!(bell_params.stacked_params[idx], bell_params.level_params, [error_probs[tt][i] for tt=1:t+1], vcat(bell_params.anc_flips[1:t],[bitflips]), check_t)
-    end
-    check_t
-end
-
+# match the spacetime syndrome using errors only on system
 function match_spacetime_syndrome(syndrome, par_checks, counts; logical::Bool = true)
 
-    # match the spacetime syndrome using errors only on system
     matching_errs = Vector{Vector{Bool}}(undef, length(par_checks))
     
     prop_err = zeros(Bool, 2)
@@ -278,65 +300,81 @@ function match_spacetime_syndrome(syndrome, par_checks, counts; logical::Bool = 
     end
 end
 
-# Only gate and measurement errors get heralded
-function initialize_error_prob_stacks(error_probs, erasures, sub_idxs, idxs)
-    tmax = length(error_probs)
-    for t=1:tmax
-        println(t)
-        for i=1:t	    
-	    for j=1:length(idxs[t][1])
-	        for qb_i=1:2^i
-		    if erasures[1][i][(idxs[t][i][j]-1)*2^i+qb_i]
-		        error_probs[t][sub_idxs[end-t-1][end-j+1]][2][i][sub_idxs[i+2][qb_i]] = [0.5, 0.5]
-		    end
-		    
-		    if i<t && erasures[2][i][(idxs[t][i+1][j]-1)*2^i+qb_i]
-		        error_probs[t][sub_idxs[end-t-1][end-j+1]][3][i][sub_idxs[i+3][2*qb_i-1]] = [0.5,0.5] # also post-check-gate errors
-		    end
-		    
-		end
-	    end
+#= Decoding functions =#
+
+export level_bell_syndrome_decoder
+"""
+Master function to decode an instance with 
+    - bell_params:BellParams: noiseless parameters of circuit
+    - error_probs: prior error probabilities on each block
+    - syndromes: observed syndrome on each block
+Returns
+    - Weights of two logical classes relative to canonical error
+    - Logical syndrome bit for canonical error
+"""
+function level_bell_syndrome_decoder(bell_params, error_probs, syndromes)
+
+    final_params = bell_params.final_params
+    tmax = length(final_params.par_checks)
+    
+    err_s, log_bit = match_spacetime_syndrome([get_index(syndrome) for syndrome in syndromes[end]], final_params.par_checks, final_params.level_params.counts; logical = true)
+
+    # now use the syndrome info from earlier levels
+    # don't need to apply update in level tmax-1, because there's only one system
+    for t=1:tmax-2
+        check_t = bayesian_update_level!(bell_params, error_probs, syndromes[t])
+	@assert check_t>=t-1
+	if check_t==t-1 # the last layer where these ancillas could have been updated, they (and all deeper blocks) instead got leaked errors
+	    update_leaked_level_probs!(error_probs[t:end], t; log_state = bell_params.log_state)
 	end
-	if t==tmax
-	    err_i = 2
-	else
-	    err_i = 4
-	end
-	for j=1:length(sub_idxs[end-t-1])
-	    for qb_i=1:2^t
-	        if erasures[3][t][qb_i]
-		    error_probs[t][sub_idxs[end-t-1][end-j+1]][err_i][end][sub_idxs[t+2][qb_i]] = [0.5, 0.5] # measurement errors
-		end
-	    end
-	end
+    	# clear away ancillae that have been used now
+    	for tt=1:t
+            error_probs[tt] = error_probs[tt][length(error_probs[t+1]) + 1:end]
+        end
     end
-    error_probs 
+
+    # check I updated things properly for order 1 stacking
+    for t=1:tmax
+        @assert length(error_probs[t])==1
+    end
+    
+    # last level: leave logical leg open
+    final_probs = last_level_bell_decode(final_params, bell_params.level_params, [error_probs[i][end] for i=1:tmax], vcat(bell_params.anc_flips, [err_s]))
+    final_probs, log_bit
 end
 
-function initialize_error_probs(counts, probs; erasure_f = 0, perfect_last::Bool = false)
-    @assert erasure_f==0
-    # state prep errors
-    error_probs = [[Array{Array}(undef, counts[i][t]) for t=1:length(counts[i])] for i=1:3]
-
-    for i=1:3
-    	for t=1:length(counts[i])
-	    for j=1:counts[i][t]
-	        error_probs[i][t][j] = [1-probs[i], probs[i]]
-	    end
+function update_leaked_level_probs!(error_probs, t; log_state::Int = 1)
+    block_lengths = vcat([0], cumsum(length.(error_probs[2:end])))
+    @threads for block_i=2:length(error_probs)
+        @threads for i=1:length(error_probs[block_i])
+	    b_i = block_lengths[block_i-1] + i
+	    update_leaked_probs!(error_probs[block_i][i][3][t], error_probs[1][b_i]; log_state = log_state, parity = log_state)
 	end
     end
+end
 
-    # if this is an ancilla block, it will also have measurement errors
-    if length(counts)>3
-	pp = probs[3] + probs[4] - 2 * probs[3]*probs[4]
-
-	measure_stuff = [[1-pp,pp] for i=1:counts[end][1]]
-	error_probs = vcat(error_probs, [[measure_stuff]])
-    elseif !perfect_last # SPECIAL CASE: measurements at end anyway, so concatenate still
-       	pp = probs[2] + probs[4] - 2*probs[2]*probs[4]
-	error_probs[2][end] = [[1-pp,pp] for i=1:counts[2][end]]
+function bayesian_update_level!(bell_params::BellPrepParams, error_probs, syndromes)
+    t = length(syndromes)
+    # only update the stuff that will become an ancilla in the next block
+    new_anc = length(error_probs[t+1])
+    idx = searchsortedlast(bell_params.check_times, t)
+    if idx==0 # nothing learned from this guy
+        return 0
     end
-    return error_probs, []
+    check_t = bell_params.check_times[idx]
+    @threads for i=1:new_anc
+        bitflips, _ = match_spacetime_syndrome([get_index(syndrome; i= i) for syndrome in syndromes], bell_params.final_params.par_checks[1:t], bell_params.level_params[t].counts; logical = false)
+        bayesian_update_pair!(bell_params.stacked_params[idx], bell_params.level_params, [error_probs[tt][i] for tt=1:t+1], vcat(bell_params.anc_flips[1:t],[bitflips]), check_t)
+    end
+    check_t
+end
+
+function get_index(arr; i::Int = 1)
+    if isempty(arr)
+        return []
+    else
+        return arr[i]
+    end
 end
 
 end # module
