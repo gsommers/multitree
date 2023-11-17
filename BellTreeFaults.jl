@@ -266,7 +266,9 @@ function initialize_bare_errors(error_probs, bitflips; error_leg=:open, flip_bit
     end
 end
 
-# This is to initialize error nodes from scratch, not match syndrome
+"""
+Initialize error nodes from scratch, not matching syndrome
+"""
 function initialize_error_nodes(counts, probs; erasure_f = 0, perfect_last::Bool = false)
     # state prep errors
     error_probs = [[Array{Array}(undef, counts[i][t]) for t=1:length(counts[i])] for i=1:3]

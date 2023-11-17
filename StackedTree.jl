@@ -1,6 +1,6 @@
 #!/usr/licensed/julia/1.7/bin/julia
 """
-stacking nodes propagates error probabilities through layers of syndrome checks
+stacking nodes - propagates error probabilities through layers of syndrome checks
 """
 module StackedTree
 
@@ -8,7 +8,8 @@ using TensorExtensions
 using Base.Threads
 using PauliNoise
 
-export stack_errors, initialize_stacked_nodes, make_stacked_index_list, make_bare_index_list, contract_error
+#= Make stacked nodes =#
+export stack_errors, initialize_stacked_nodes
 
 # for the more general case of "quantum errors"
 function make_internal()
@@ -64,6 +65,10 @@ function initialize_stacked_nodes(times::AbstractArray; log_state::Int = -1, ope
     
     return (input = stacked_input, bulk = stacked_nodes)
 end
+
+#= Make index lists for stacked or unstacked trees =#
+
+export make_bare_index_list, make_stacked_noisy_index_list
 
 function make_bare_index_list(tmax; measure_first::Int = 1, log_state::Int = 1, i::Int = 0)
     input_idxs, encoding_idxs, check_idxs, gate_idxs = make_system_index_list(tmax, zeros(Bool, tmax); n=1, log_state = log_state, level = true, measure_first = measure_first, i = i)
@@ -148,8 +153,7 @@ function get_top_layer_idxs(sys_idxs, anc_idxs, t, n)
     return [[anc_idxs[i][2], sys_idxs[t][i][n+1], idx_count + i] for i=1:2^t], idx_count
 end
 
-export make_stacked_noisy_index_list
-# all but top has ancillas
+# all but top layer has ancillas
 function make_stacked_noisy_index_list(tmax::Int; log_state::Int = 1, open_logical::Bool = true, measure_first::Int = 1, perfect_layer::Int = 0)
     make_stacked_noisy_index_list(tmax, 1:tmax-1; log_state = log_state, open_logical = open_logical, measure_first = measure_first, perfect_layer = perfect_layer, level = false)
 end
@@ -221,77 +225,15 @@ function make_stacked_noisy_index_list(tmax::Int, anc_times; log_state::Int = 1,
     (sys_idxs = sys_idxs, anc_idxs = anc_idxs, top_idxs = vcat(top_layer_idxs...), order = vcat(order...))
 end
 
-export make_stacked_syndrome_index_list
-function make_stacked_syndrome_index_list(tmax::Int, anc_times; log_state::Int = 1, measure_first::Int = 1)
-    noisy_params = make_stacked_noisy_index_list(tmax, anc_times; log_state = log_state, open_logical = false, measure_first = measure_first, perfect_layer = 1, level = true)
-    nmax = noisy_params[:top_idxs][end][end]
-    
-    # the true "system idxs"
-    final_sys_idxs = [[i] for i=nmax+1:nmax+2^tmax]
-    # now tack on the last layer of gate/measurement errors on what ends up as the "ancilla"
-    final_anc_idxs = [[i] for i=nmax+2^tmax+1:nmax+2^(tmax+1)]
-    # and another layer of "top idxs"
-    top_idxs = [[noisy_params[:sys_idxs][2][end][i][end], final_sys_idxs[i][1], final_anc_idxs[i][1]] for i=1:2^tmax]
+#= Contract error into open leg of (stacked) node =#
+export initialize_stacked_errors, evaluate_top_error, contract_error
 
-    # these come first now
-    order = vcat([arr[end] for arr in top_idxs], vcat([arr[1:2] for arr in top_idxs]...))
-
-    push!(noisy_params[:sys_idxs][3], final_anc_idxs)
-    (sys_idxs = final_sys_idxs, state_prep_idxs = noisy_params[:sys_idxs], anc_idxs = noisy_params[:anc_idxs], top_idxs = vcat(noisy_params[:top_idxs], top_idxs), order = vcat(order, noisy_params[:order])) 
-end
-
-function make_stacked_index_list(tmax; log_state::Int = 1, level::Bool = true)
-    input_idxs = [[] for t=1:tmax]
-    gate_idxs = [[] for t=1:tmax]
-    encoding_idxs = [[] for t=1:tmax]
-    check_idxs = [[] for t=1:tmax-1]
-    i = 0
-    for t=1:tmax
-        if t==1 && log_state==2 
-	    jmax=1
-	else
-	    jmax = 2^(t-1)-1
-	end
-	if t==1 || log_state%2 != t%2 # input errors
-            input_idxs[t] = [(i+j*(tmax-t+1)) .+ (1:tmax-t+1) for j=0:jmax]
-	    i = input_idxs[t][end][end]
-	end
-	encoding_idxs[t] = [(i+j*(2*(tmax-t)+1)) .+ (1:2*(tmax-t)+1) for j=0:2^t-1]
-	
-	if t==1
-	    gate_idxs[t] = [vcat([input_idxs[t][i][k] for i=1:length(input_idxs[t])],  [encoding_idxs[t][i][k] for i=1:2]) for k=1:tmax-t+1]
-	else
-	    if t%2==log_state%2 # only the left leg, no input leg
-	        idxs = [[check_idxs[t-1][j][k+tmax-t+1], encoding_idxs[t][2*j-1][k],encoding_idxs[t][2*j][k]] for k=1:tmax-t+1, j=1:2^(t-1)]
-	    else
-	        idxs = [[check_idxs[t-1][j][k+tmax-t+1],input_idxs[t][j][k], encoding_idxs[t][2*j-1][k],encoding_idxs[t][2*j][k]] for k=1:tmax-t+1, j=1:2^(t-1)]
-	    end
-	    gate_idxs[t] = reshape(idxs, length(idxs))
-	end
-
-	if t<tmax
-	    i = encoding_idxs[t][end][end]
-	    check_idxs[t] = [vcat(idxs[tmax-t+2:end], i+(tmax-t)*(j-1) .+ (1:(tmax-t))) for (j,idxs) in enumerate(encoding_idxs[t])]
-	    i = check_idxs[t][end][end]
-	end
-
+function evaluate_top_error(probs, bitflip)
+    if bitflip
+        return probs[end:-1:1]
+    else
+        return probs
     end
-    order = []
-    for t=tmax:-1:1
-        push!(order, [arr[end-1:end] for arr in gate_idxs[t]]...)
-	push!(order, [arr[1:end-2] for arr in gate_idxs[t]]...)
-	if t>1
-	    push!(order, [arr[1:end÷2] for arr in check_idxs[t-1]]...)
-	end
-    end
-    if level
-        last_idx = encoding_idxs[end][end][1]
-        encoding_idxs[end] = [[encoding_idxs[end][i][1], last_idx + i] for i=1:length(encoding_idxs[end])]
-    else # this is the last level, so now there's an open logical
-        input_idxs[1][1] = vcat([-1], input_idxs[1][1])
-    end
-    
-    (idxs = [input_idxs, encoding_idxs, check_idxs, gate_idxs], order = order)
 end
 
 # for dimension 2 (classical)
@@ -328,17 +270,10 @@ function contract_error(::Val{:open}, probs, err_ind::Int, node; apply_error::Bo
     ncon!([node, prob_node], [vcat([-i for i=1:ndims(node)-1],[1]),[1, -ndims(node)]])
 end
 
-export initialize_stacked_errors
-
-export evaluate_top_error
-function evaluate_top_error(probs, bitflip)
-    if bitflip
-        return probs[end:-1:1]
-    else
-        return probs
-    end
-end
-
+"""
+Contract errors (error_probs, bitflips) into stacked nodes, leaving it
+open (for marginal probabilities) or closed
+"""
 function initialize_stacked_errors(stacked_nodes, error_probs, bitflips; level::Bool = true, error_leg=:open, apply_error::Bool = true, noisy_ancilla::Bool = true, measurement_error::Bool = true)
     tmax = length(stacked_nodes.bulk)
     # t, t, t-1
