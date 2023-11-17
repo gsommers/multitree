@@ -1,7 +1,8 @@
 #!/usr/licensed/julia/1.7/bin/julia
 """
-Module for independent X/Z noise in Bell tree
-uses reduced bond dimension since everything is essentially classical
+Module for faults in Bell tree: binary tree where each gate is (H otimes H) CNOT
+Treating noise as independent X/Z, we separately decode bit and phase flips
+so everything is essentially classical (bond dimension 2)
 """
 module BellTreeFaults
 
@@ -17,8 +18,11 @@ const CHECK_NODE = dropdims(sum(CNOT_NODE, dims=1), dims=1)
 const NOTC_NODE = permutedims(CNOT_NODE,[2,1,4,3])
 const NOTC_GAUGE_NODE = dropdims(sum(NOTC_NODE,dims=2),dims=2)
 
-# erasure_f is not used here
+"""
+Initialize error probabilities and bitflips
+"""
 function make_error_node(probs::Array; erasure_f = 0)
+    # erasure_f is not used here, probs[1] is unheralded, probs[2] heralded
     if sum(probs)==0
         return [1,0], false
     else
@@ -48,14 +52,18 @@ end
 # Tree error propagation
 export propagate_tree_errors_classical, propagate_tree_classical_layer, prepare_error_basis, track_bell_error_probs, update_leaked_probs!
 
-# for propagating error to the end
+"""
+Get basis of errors starting from logical leg (left) and stabilizer leg (right)
+If basis_i=1, only track the errors that start as bit flips entering even layers, Z errors entering odd layers (i.e. affect the logical + state
+If basis_i=2, do the opposite
+"""
 function prepare_error_basis(tmax; basis_i::Int = 1)
     cliff = Bool[0 0 1 1; 0 0 0 1; 1 0 0 0; 1 1 0 0]
 
     paulis = [Array{Array}(undef, tmax), Array{Array}(undef, tmax)]
     for (fresh_i, fresh)=enumerate([false, true])
         bases = [track_operator_spreading(cliff, pauli, tmax; fresh = fresh) for pauli = [Bool[1,0], Bool[0,1]]]
-	# X entering even layers, Z on odd layers for basis_i=1
+
 	matching_bases = [bases[(t+basis_i)%2+1][end-t] for t=0:tmax-1]
 	if (basis_i+tmax)%2==0 # should end up all X's
 	    @assert all([all(iszero, pauls[end÷2+1:end]) for pauls in matching_bases])
@@ -70,8 +78,11 @@ function prepare_error_basis(tmax; basis_i::Int = 1)
 end
 
 
-# propagate from time t to t+1
-# (check gate), input, encoding gate
+"""
+Propagate error from time t to t+1,
+errs[1]: errors on fresh stabilizer legs (only on CNOT layers)
+errs[2]: errors after encoding gate
+"""
 function propagate_tree_classical_layer(errs, incoming_err)
     if isempty(errs[1]) # this is a layer with "gauge" inputs
         # which also means it's a NOTC layer

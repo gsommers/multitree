@@ -44,7 +44,7 @@ struct BellPrepParams
 
 	final_params = StackedPerfectBell(tmax; log_state = log_state, measure_first = measure_first, alternate = alternate)
 	anc_flips = [[[zeros(Bool, lp.counts[i][t]) for t=1:length(lp.counts[i])] for i=1:4] for lp in level_params]
-	error_bases = [prepare_error_basis(t; basis = log_state) for t=1:tmax-1]
+	error_bases = [prepare_error_basis(t; basis_i = log_state) for t=1:tmax]
 	new(stacked_params, final_params, level_params, error_bases, anc_flips, check_times, log_state)
     end
 end
@@ -102,6 +102,7 @@ function process_syndrome(outcomes, par_checks, tree_idxs, sub_idxs, check_times
 end
 
 #= Functions to initialize error probabilities, generate errors =#
+export prep_syndrome_decoder
 
 """
 Initialize error probabilities, unheralded part of noise
@@ -259,7 +260,7 @@ function get_spacetime_syndrome(bitflips, paulis, par_checks, check_times)
 end
 
 # match the spacetime syndrome using errors only on system
-function match_spacetime_syndrome(syndrome, par_checks, counts; logical::Bool = true)
+function match_spacetime_syndrome(syndrome, par_checks, counts, paulis; logical::Bool = true)
 
     matching_errs = Vector{Vector{Bool}}(undef, length(par_checks))
     
@@ -288,7 +289,7 @@ function match_spacetime_syndrome(syndrome, par_checks, counts; logical::Bool = 
         return matched_err, false
     end
     
-    last_syndrome = par_checks[end] * bool_to_nemo(propagate_tree_errors_classical(matched_err)[:,:])
+    last_syndrome = par_checks[end] * bool_to_nemo(propagate_tree_errors_classical(matched_err, paulis; on_right = false)[:,:])
 
     # just a sanity check
     if logical
@@ -317,7 +318,7 @@ function level_bell_syndrome_decoder(bell_params, error_probs, syndromes)
     final_params = bell_params.final_params
     tmax = length(final_params.par_checks)
     
-    err_s, log_bit = match_spacetime_syndrome([get_index(syndrome) for syndrome in syndromes[end]], final_params.par_checks, final_params.level_params.counts; logical = true)
+    err_s, log_bit = match_spacetime_syndrome([get_index(syndrome) for syndrome in syndromes[end]], final_params.par_checks, final_params.level_params.counts, bell_params.error_bases[end]; logical = true)
 
     # now use the syndrome info from earlier levels
     # don't need to apply update in level tmax-1, because there's only one system
@@ -363,7 +364,7 @@ function bayesian_update_level!(bell_params::BellPrepParams, error_probs, syndro
     end
     check_t = bell_params.check_times[idx]
     @threads for i=1:new_anc
-        bitflips, _ = match_spacetime_syndrome([get_index(syndrome; i= i) for syndrome in syndromes], bell_params.final_params.par_checks[1:t], bell_params.level_params[t].counts; logical = false)
+        bitflips, _ = match_spacetime_syndrome([get_index(syndrome; i= i) for syndrome in syndromes], bell_params.final_params.par_checks[1:t], bell_params.level_params[t].counts, bell_params.error_bases[t]; logical = false)
         bayesian_update_pair!(bell_params.stacked_params[idx], bell_params.level_params, [error_probs[tt][i] for tt=1:t+1], vcat(bell_params.anc_flips[1:t],[bitflips]), check_t)
     end
     check_t
