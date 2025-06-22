@@ -1,5 +1,5 @@
 # multitree
-Self-contained repository for multitree state preparation of the "Bell tree code." Additional code (generalizing to other gates, optimal decoder for fully heralded noise, syndrome extraction gadget) available upon request; please contact <gsommers@princeton.edu>. 
+Self-contained repository for multitree state preparation of the generalized Shor (GS) code. Additional code (spacetime decoding of heralded errors, syndrome extraction gadget) available upon request; please contact <gsommers@princeton.edu>. 
 
 To use the modules included in this repo, execute the following from the command line:
 
