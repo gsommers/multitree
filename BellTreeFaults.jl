@@ -1,6 +1,6 @@
-#!/usr/licensed/julia/1.7/bin/julia
+#!/usr/licensed/julia/1.11/bin/julia
 """
-Module for faults in Bell tree: binary tree where each gate is (H otimes H) CNOT
+Module for faults in Bell tree (Generalized Shor code): binary tree where each gate is (H⊗H) CNOT, and every input is Z.
 Treating noise as independent X/Z, we separately decode bit and phase flips
 so everything is essentially classical (bond dimension 2)
 """
@@ -20,9 +20,9 @@ const NOTC_GAUGE_NODE = dropdims(sum(NOTC_NODE,dims=2),dims=2)
 
 """
 Initialize error probabilities and bitflips
+erasure_f is not used here. Instead, probs[1] is unheralded, probs[2] heralded
 """
 function make_error_node(probs::Array; erasure_f = 0)
-    # erasure_f is not used here, probs[1] is unheralded, probs[2] heralded
     if sum(probs)==0
         return [1,0], false
     else
@@ -35,6 +35,10 @@ function make_error_node(probs::Array; erasure_f = 0)
     end
 end
 
+"""
+Initialize error probabilities and bit flips
+erasure_f is the heralding fraction
+"""
 function make_error_node(prob::Number; erasure_f = 0)
     r = rand()
     if r < prob * erasure_f # heralded (erasure)
@@ -54,16 +58,17 @@ export propagate_tree_errors_classical, propagate_tree_classical_layer, prepare_
 
 """
 Get basis of errors starting from logical leg (left) and stabilizer leg (right)
-If basis_i=1, only track the errors that start as bit flips entering even layers, Z errors entering odd layers (i.e. affect the logical + state
-If basis_i=2, do the opposite
+If basis_i=1, only track the errors that start as bit flips entering even layers, Z errors entering odd layers (i.e. affect the logical + state)
+If basis_i=2, do the opposite (affect logical 0 state)
 """
 function prepare_error_basis(tmax; basis_i::Int = 1)
+    # Clifford tableau for the gate
     cliff = Bool[0 0 1 1; 0 0 0 1; 1 0 0 0; 1 1 0 0]
 
     paulis = [Array{Array}(undef, tmax), Array{Array}(undef, tmax)]
     for (fresh_i, fresh)=enumerate([false, true])
         bases = [track_operator_spreading(cliff, pauli, tmax; fresh = fresh) for pauli = [Bool[1,0], Bool[0,1]]]
-
+	# X entering even layers, Z on odd layers for basis_i=1
 	matching_bases = [bases[(t+basis_i)%2+1][end-t] for t=0:tmax-1]
 	if (basis_i+tmax)%2==0 # should end up all X's
 	    @assert all([all(iszero, pauls[end÷2+1:end]) for pauls in matching_bases])
@@ -76,7 +81,6 @@ function prepare_error_basis(tmax; basis_i::Int = 1)
     end
     paulis
 end
-
 
 """
 Propagate error from time t to t+1,
@@ -96,6 +100,13 @@ function propagate_tree_classical_layer(errs, incoming_err)
     err .+ errs[2]
 end
 
+"""
+propagate classical errors (bit flips) through the multitree.
+errs[1]: errors on fresh stabilizer legs
+errs[2]: errors after encoding gate
+errs[3]: errors after check gate
+errs[4]: measurement errors
+"""
 function propagate_tree_errors_classical(errs)
     myerr = propagate_tree_classical_layer([errs[1][1][2:end], errs[2][1]], errs[1][1][1:1])
     for t=2:length(errs[1])
@@ -108,11 +119,16 @@ function propagate_tree_errors_classical(errs)
     end
 end
 
-# this is faster, if I already have the error basis
+"""
+Faster method for propagating errors, if I already have the error basis
+"""
 function propagate_tree_errors_classical(errs, paulis; on_right::Bool = false)
     propagate_tree_errors_classical(errs, paulis, length(errs[1]); on_right = on_right)
 end
 
+"""
+Faster method for propagating errors, if I already have the error basis (rather than propagating through on the fly)
+"""
 function propagate_tree_errors_classical(errs, paulis, tmax; on_right::Bool = false)
    myerr = copy(errs[2][tmax])
 
@@ -200,6 +216,9 @@ function get_err_perm(i)
     end
 end
 
+"""
+Evaluate error_node tensor, leaving a leg sticking out
+"""
 function evaluate_error(::Val{:open}, probs, bitflip::Bool; input::Bool = false)
     if bitflip
         prob_node = cat([0 probs[1]; probs[1] 0], [probs[2] 0; 0 probs[2]], dims = 3)
@@ -214,6 +233,9 @@ function evaluate_error(::Val{:open}, probs, bitflip::Bool; input::Bool = false)
     end
 end
 
+"""
+Evaluate error_node tensor, not leaving a leg sticking out
+"""
 function evaluate_error(::Val{:closed}, probs, bitflip::Bool; input::Bool = false)
     if input
         return evaluate_top_error(probs, bitflip)
@@ -228,17 +250,9 @@ end
 # Initializing errors
 export initialize_error_nodes, initialize_bare_errors, initialize_level_errors
 
-function initialize_level_errors(error_counts, probs; erasure_f=0, func = initialize_error_nodes, perfect_last::Bool = true)
-    tmax = length(error_counts)
-    st_probs = [Array{Array}(undef, 2^(tmax-t-1)) for t=1:tmax-1]
-    st_errs = [Array{Array}(undef, 2^(tmax-t-1)) for t=1:tmax-1]
-    for t=1:tmax-1, i=1:2^(tmax-t-1)
-        st_probs[t][i], st_errs[t][i] = func(error_counts[t], probs; erasure_f = erasure_f)
-    end
-    sys_probs, sys_errs = func(error_counts[end], probs; erasure_f = erasure_f, perfect_last = perfect_last)
-    vcat(st_probs, [[sys_probs]]), vcat(st_errs, [[sys_errs]])
-end
-
+"""
+Initialize error tensors on bare tree (no stacking)
+"""
 function initialize_bare_errors(error_probs, bitflips; error_leg=:open, flip_bit::Bool = true)
     tmax = length(error_probs[1])
     errs = [[Array{Array}(undef, length(error_probs[j][i])) for i=1:length(error_probs[j])] for j=1:3]
@@ -267,9 +281,23 @@ function initialize_bare_errors(error_probs, bitflips; error_leg=:open, flip_bit
 end
 
 """
-Initialize error nodes from scratch, not matching syndrome
+Initialize errors on all blocks of multitree, sampling the errors rather than matching a specified syndrome
 """
-function initialize_error_nodes(counts, probs; erasure_f = 0, perfect_last::Bool = false)
+function initialize_level_errors(error_counts, probs; erasure_f=0, func = initialize_error_nodes, measurement_error::Bool = false)
+    tmax = length(error_counts)
+    st_probs = [Array{Array}(undef, 2^(tmax-t-1)) for t=1:tmax-1]
+    st_errs = [Array{Array}(undef, 2^(tmax-t-1)) for t=1:tmax-1]
+    for t=1:tmax-1, i=1:2^(tmax-t-1)
+        st_probs[t][i], st_errs[t][i] = func(error_counts[t], probs; erasure_f = erasure_f, measurement_error = measurement_error)
+    end
+    sys_probs, sys_errs = func(error_counts[end], probs; erasure_f = erasure_f, measurement_error = measurement_error)
+    vcat(st_probs, [[sys_probs]]), vcat(st_errs, [[sys_errs]])
+end
+
+"""
+Initialize error nodes from scratch (sampling errors), rather than matching a specified syndrome
+"""
+function initialize_error_nodes(counts, probs; erasure_f = 0, measurement_error::Bool = false)
     # state prep errors
     error_probs = [[Array{Array}(undef, counts[i][t]) for t=1:length(counts[i])] for i=1:3]
     bitflips = [[zeros(Bool, counts[i][t]) for t=1:length(counts[i])] for i=1:3]
@@ -283,6 +311,10 @@ function initialize_error_nodes(counts, probs; erasure_f = 0, perfect_last::Bool
 
     # if this is an ancilla block, it will also have measurement errors
     if length(counts)>3
+        #= see back of black notebook, p. 56 - we can concatenate to get
+	   p' = p + q - pq(1 + (1-Re)^2)
+	   Re' = Re(p + q - Re pq)/p'
+	=#
 	last_probs = Array{Array}(undef, counts[end][1])
 	last_flips = zeros(Bool, counts[end][1])
 	for i=1:counts[end][1]
@@ -293,7 +325,14 @@ function initialize_error_nodes(counts, probs; erasure_f = 0, perfect_last::Bool
 	end
 	error_probs = vcat(error_probs, [[last_probs]])
 	bitflips = vcat(bitflips, [[last_flips]])
-    elseif !perfect_last # SPECIAL CASE: measurements at end, so concatenate still
+	#=
+	pp = probs[3] + probs[4] - probs[3]*probs[4]*(1 + (1-erasure_f)^2)
+	erasure_p = erasure_f * (probs[3] + probs[4] - erasure_f * probs[3] * probs[4])/pp
+	measure_stuff = [make_error_node(pp; erasure_f = erasure_p) for i=1:counts[end][1]]
+	error_probs = vcat(error_probs, [[[ms[1] for ms in measure_stuff]]])
+	bitflips = vcat(bitflips, [[[ms[2] for ms in measure_stuff]]])
+	=#
+    elseif measurement_error # SPECIAL CASE: measurements at end, so concatenate still
 	measure_stuff = [make_error_node(probs[4]; erasure_f = erasure_f) for i=1:counts[2][end]]
 	for i=1:counts[2][end]
 	    error_probs[2][end][i] = concatenate_channels(measure_stuff[i][1], error_probs[2][end][i])
@@ -303,6 +342,9 @@ function initialize_error_nodes(counts, probs; erasure_f = 0, perfect_last::Bool
     return error_probs, bitflips
 end
 
+"""
+Propagate errors through tree and leak onto system
+"""
 function update_leaked_probs!(post_probs, error_probs; parity::Int = 1, log_state::Int = 1)
     leaked_probs = track_bell_error_probs(error_probs; parity = parity, log_state = log_state)
     for i=1:length(leaked_probs)
