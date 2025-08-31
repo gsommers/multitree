@@ -1,5 +1,5 @@
 # multitree
-Self-contained repository for multitree state preparation of the generalized Shor (GS) code. Additional code (spacetime decoding of heralded errors, syndrome extraction gadget) available upon request; please contact <gsommers@princeton.edu>. 
+Self-contained repository for multitree state preparation of the generalized Shor (GS) code, also called the Bell tree. Additional code (spacetime decoding of heralded errors, syndrome extraction gadget) available upon request; please contact <gsommers@princeton.edu>. 
 
 To use the modules included in this repo, execute the following from the command line:
 

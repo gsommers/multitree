@@ -14,6 +14,7 @@ using Nemo
 using BellTreeTensors
 using BellTreeFaults
 using BinaryFields # bool_to_nemo, match_syndrome
+using SteanePrep # get_system_idxs
 
 export BellPrepParams
 
@@ -54,14 +55,6 @@ end
 Process data from circuit into blocks at different levels
 """
 export process_syndrome, prepare_check_idxs, convert_outcomes, convert_outcomes_coherent
-
-function get_system_idxs(tmax)
-    system_idxs = [1]
-    for t=1:tmax
-        system_idxs = vcat(2 .* system_idxs .- 1, 2 .* system_idxs)
-    end
-    system_idxs
-end
 
 function prepare_check_idxs(tmax)
     tree_idxs = [expand_checks(tmax; nmin = t) for t=1:tmax]
