@@ -1,4 +1,4 @@
-#!/usr/licensed/julia/1.7/bin/julia
+#!/usr/licensed/julia/1.11/bin/julia
 
 """
 Track stabilizers and logicals on a binary tree with arbitrary gate
@@ -8,7 +8,7 @@ module StabilizerTree
 using QuantumClifford
 
 #= Tracking operator spreading from root or fresh leaf =#
-export track_operator_spreading, track_fresh_stabilizers, track_stabilizer_generators, track_logical_reps, track_substabilizers
+export track_operator_spreading, track_fresh_stabilizers, track_stabilizer_generators, track_logical_reps, track_substabilizers, prepare_error_basis
 
 function track_operator_spreading(cliff, pauli, tmax; fresh::Bool = true)
     tabs = Array{Array}(undef, tmax)
@@ -75,7 +75,6 @@ function inflate_pauli(cliff, pauli)
     [inflated[[1,3]], inflated[[2,4]]]
 end
 
-export prepare_error_basis
 function prepare_error_basis(gate, tmax::Int)
     cliff = stab_to_gf2(gate.tab)'
 

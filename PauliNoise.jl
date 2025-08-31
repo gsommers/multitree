@@ -1,4 +1,4 @@
-#!/usr/licensed/julia/1.7/bin/julia
+#!/usr/licensed/julia/1.11/bin/julia
 """
 Pauli channels, mostly classical
 """
