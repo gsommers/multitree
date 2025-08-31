@@ -326,20 +326,14 @@ end
 """
 Default wiring, reset/feed back in measured qubits to keep a constant number
 """
-function prep_state_fixed_n(gate, tmax, rates; input = :Z, log_state = :Z, measure_first::Int=1, fixed_n::Bool = true, erasure_sites = nothing, clusters = nothing, input_sites = nothing, ancilla_stabs = nothing, alternate::Bool = true, two_qubit::Bool = false)
+function prep_state_fixed_n(gate, tmax, rates; input = :Z, log_state = :Z, measure_first::Int=1, fixed_n::Bool = true, erasure_sites = nothing, alternate::Bool = true, two_qubit::Bool = false)
     s = MixedDestabilizer(one(Stabilizer, 2^tmax, basis=log_state))
     record = zeros(Int, tmax-1)
     entropies = zeros(Int, tmax+1)
 
     # erasure locations of each type, fixed fraction/layer or iid
-    if !isnothing(clusters) # this is the subtrees version
-        subtree = true
-        erasure_sites = sample_subtree_sites(clusters, input_sites, tmax, rates; fixed_n = fixed_n)
-    else # fixed per layer, or iid
-        subtree = false
-	if isnothing(erasure_sites)
-            erasure_sites = get_erasure_sites(rates, tmax; fixed_n = fixed_n, two_qubit = two_qubit)
-        end
+    if isnothing(erasure_sites)
+        erasure_sites = get_erasure_sites(rates, tmax; fixed_n = fixed_n, two_qubit = two_qubit)
     end
     # up to depth tmax...
     gate_idxs = get_gate_idxs(1, tmax)
@@ -350,11 +344,11 @@ function prep_state_fixed_n(gate, tmax, rates; input = :Z, log_state = :Z, measu
     for t=1:tmax
 
     	# Step 0: erasure errors on input legs
-	trace_layer!(s, input_sites, erasure_sites[1][t]; subtree = subtree)
+	trace_layer!(s, input_sites, erasure_sites[1][t])
 	
         # Step 1: encoding gates
 	apply!(s, big_gate, vcat(gate_idxs...))
-	trace_layer!(s, 1:2^tmax, erasure_sites[2][t]; subtree = subtree)
+	trace_layer!(s, 1:2^tmax, erasure_sites[2][t])
 
 	t==tmax && break
 	# Step 2: CNOTs with ancillas
@@ -365,29 +359,19 @@ function prep_state_fixed_n(gate, tmax, rates; input = :Z, log_state = :Z, measu
 	    parity = measure_first
 	end
 	
-	transversal_cnot!(s, gate_idxs, parity; had = isnothing(ancilla_stabs))
-	trace_layer!(s, 1:2^tmax, erasure_sites[3][t]; subtree = subtree)
+	transversal_cnot!(s, gate_idxs, parity; had = true)
+	trace_layer!(s, 1:2^tmax, erasure_sites[3][t])
 	
 	# Step 3: measure ancillas
 	input_sites = [site_pair[2] for site_pair in gate_idxs]
-	trace_layer!(s, input_sites, erasure_sites[4][t]; subtree = subtree)
+	trace_layer!(s, input_sites, erasure_sites[4][t])
 
 	# special case where I pass in the stuff I actually want to measure
-	if !isnothing(ancilla_stabs)
-	    for p in ancilla_stabs[t]
-	        pre_rank = s.rank
-		_, anticom, _ = project!(s, p; keep_result = true)
-	        if anticom==0
-		    record[t] += 1
-		end
-	    end
-	else
-	    for site in input_sites
-	        pre_rank = s.rank
-	    	projectZ!(s, site; keep_result = false)
-	    	if s.rank > pre_rank
-	            record[t] += 1
-	        end
+	for site in input_sites
+	    pre_rank = s.rank
+	    projectZ!(s, site; keep_result = false)
+	    if s.rank > pre_rank
+	        record[t] += 1
 	    end
 	end
 	entropies[t] = nqubits(s) - s.rank
@@ -401,8 +385,8 @@ end
 """
 Run the fully butterfly network circuit, including perfect stabilizer measurement at end
 """
-function prep_state_fixed_n(gate, tmax, rates, to_measure; input = :Z, log_state = :Z, measure_first::Int=1, fixed_n::Bool = true, erasure_sites = nothing, clusters = nothing, input_sites = nothing, ancilla_stabs = nothing, two_qubit::Bool = false)
-    s, entropies, record, erasure_sites = prep_state_fixed_n(gate, tmax, rates; input = input, log_state = log_state, measure_first = measure_first, fixed_n = fixed_n, erasure_sites = erasure_sites, clusters = clusters, input_sites = input_sites, ancilla_stabs = ancilla_stabs, two_qubit = two_qubit)
+function prep_state_fixed_n(gate, tmax, rates, to_measure; input = :Z, log_state = :Z, measure_first::Int=1, fixed_n::Bool = false, erasure_sites = nothing, two_qubit::Bool = false)
+    s, entropies, record, erasure_sites = prep_state_fixed_n(gate, tmax, rates; input = input, log_state = log_state, measure_first = measure_first, fixed_n = fixed_n, erasure_sites = erasure_sites, two_qubit = two_qubit)
     entropies[end] = system_entropy!(copy(s), to_measure, 2^tmax; check=false)
     s, entropies, record, erasure_sites
 end
