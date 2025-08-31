@@ -1,17 +1,18 @@
-#!/usr/licensed/julia/1.7/bin/julia
+#!/usr/licensed/julia/1.11/bin/julia
 """
 Module that sets up all the tensor network stuff 
+for decoding the Bell tree (generalized Shor code)
 """
 module BellTreeTensors
 
-using Nemo # for gfp_mat
+using Nemo # for FqMatrix
 using Base.Threads
+using QuantumClifford # for prepare_par_check
 
 using BinaryFields # bool_to_nemo
 using StackedTree
 using BellTreeFaults
 using TensorExtensions
-using QuantumClifford # for prepare_par_check
 using StabilizerTree
 
 export LevelParams, StackedBell, StackedPerfectBell
@@ -41,7 +42,7 @@ struct LevelParams
     LevelParams(idxs, order, counts, gate; st_idxs = []) = new(idxs, order, counts, st_idxs, gate)
 end
 
-# Not used now...
+# order for tensor network contraction
 function order_indices(order, top_layer; offset::Int = 0)
     indices = vcat([idxs[end] for idxs in top_layer], [idxs[1:2] for idxs in top_layer]...)
     for idx_list in order
@@ -69,8 +70,9 @@ struct StackedBell
     level_params::LevelParams # idxs, gate nodes, and orders for contraction
     stacked_nodes::NamedTuple # stacked nodes
     times::AbstractArray # times where we connect to ancillas/collect syndrome info
+    
     function StackedBell(tmax; log_state::Int=1, measure_first::Int = 1, alternate::Bool = true)
-        if alternate
+        if alternate # perform matching checks in every layer
 	    times = 1:tmax
 	else
 	    times = 2-tmax%2:2:tmax
@@ -107,7 +109,7 @@ after directly measuring stabilizers on system
 struct StackedPerfectBell
     level_params::LevelParams # idxs, gate nodes, and orders for contraction at last level
     stacked_nodes::NamedTuple # stacked nodes for last level
-    par_checks::Array{gfp_mat} # parity check matrices (including logical) for each level
+    par_checks::Array{FqMatrix} # parity check matrices (including logical) for each level
     times::AbstractArray # times where we connect to ancillas/collect syndrome info
 
     function StackedPerfectBell(tmax; log_state::Int=1, measure_first::Int=1, alternate::Bool=true)
@@ -135,6 +137,9 @@ struct StackedPerfectBell
     end
 end
 
+"""
+Number of error locations of each type, in each layer
+"""
 function get_classical_error_counts(t::Int; log_state::Int = 1, measure_first::Int = 1, measurement_error::Bool = true)
     encoding_counts = [2^i for i=1:t]
     check_counts = [2^i for i=1:t-1]
@@ -162,6 +167,10 @@ function prepare_par_check(t; log_state::Int=1, measure_log::Bool = true)
     else
         stab_mat = vcat(track_fresh_stabilizers((tHadamard ⊗ tHadamard)*tCNOT, t, log_state%2+1:2:t)...)
     end
+    if size(stab_mat,1)==0 # shouldn't happen, unless you do weird check order
+        return matrix(GF(2), zeros(Bool,0,0))
+    end
+
     if t%2==log_state%2 # will be Z type, so keep last n columns
         return bool_to_nemo(stab_mat[:,end÷2+1:end])
     else # will be X type, so keep first n columns
