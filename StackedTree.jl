@@ -1,4 +1,4 @@
-#!/usr/licensed/julia/1.7/bin/julia
+#!/usr/licensed/julia/1.11/bin/julia
 """
 stacking nodes - propagates error probabilities through layers of syndrome checks
 """
@@ -11,7 +11,7 @@ using PauliNoise
 #= Make stacked nodes =#
 export stack_errors, initialize_stacked_nodes
 
-# for the more general case of "quantum errors"
+# for the more general case of "quantum errors" (not done in this repo)
 function make_internal()
     mat = zeros(Int, 4, 4, 4, 4)
     for i=1:4
@@ -158,6 +158,9 @@ function make_stacked_noisy_index_list(tmax::Int; log_state::Int = 1, open_logic
     make_stacked_noisy_index_list(tmax, 1:tmax-1; log_state = log_state, open_logical = open_logical, measure_first = measure_first, perfect_layer = perfect_layer, level = false)
 end
 
+"""
+Make index list for noisy multitree circuit
+"""
 function make_stacked_noisy_index_list(tmax::Int, anc_times; log_state::Int = 1, open_logical::Bool = true, measure_first::Int = 1, perfect_layer::Int = 0, level::Bool = true)
     anc_flags = [t in anc_times for t=1:tmax]
     input_idxs, encoding_idxs, check_idxs, gate_idxs = make_system_index_list(tmax, anc_flags; n = length(anc_times) + perfect_layer, log_state = log_state, measure_first = measure_first, level = level, i = 0)
