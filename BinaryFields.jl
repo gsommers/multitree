@@ -22,13 +22,18 @@ function nemo_to_bool(V::FqMatrix)
     A
 end
 
-# given a syndrome, find a Pauli string with that syndrome
+"""
+given a syndrome, find a Pauli string with that syndrome
+"""
 function match_syndrome(par_check::FqMatrix, syndrome::FqMatrix)
-    check, err = can_solve_with_solution(par_check, syndrome)
+    check, err = can_solve_with_solution(par_check, syndrome, side=:right)
     @assert check
     err
 end
 
+"""
+given a Pauli error, compute syndrome and find another Pauli string with that syndrome
+"""
 function match_syndrome(par_check::FqMatrix, pauli_tab::AbstractMatrix)
     syndrome = par_check * bool_to_nemo(pauli_tab')
     match_syndrome(par_check, syndrome)

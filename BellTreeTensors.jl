@@ -7,7 +7,7 @@ module BellTreeTensors
 
 using Nemo # for FqMatrix
 using Base.Threads
-using QuantumClifford # for prepare_par_check
+using QuantumClifford
 
 using BinaryFields # bool_to_nemo
 using StackedTree
@@ -18,7 +18,7 @@ using StabilizerTree
 export LevelParams, StackedBell, StackedPerfectBell
 """
 Parameters associated with TN contraction at level t
-Note: many of these features are only used in other modules
+Note: some of these features are only used in other modules
 not published to this repo.
 """
 struct LevelParams
@@ -168,6 +168,7 @@ function prepare_par_check(t; log_state::Int=1, measure_log::Bool = true)
         stab_mat = vcat(track_fresh_stabilizers((tHadamard ⊗ tHadamard)*tCNOT, t, log_state%2+1:2:t)...)
     end
     if size(stab_mat,1)==0 # shouldn't happen, unless you do weird check order
+        println("ALERT! no syndrome learned in this level")
         return matrix(GF(2), zeros(Bool,0,0))
     end
 
@@ -239,6 +240,31 @@ end
 # Decoding
 export bayesian_update_pair!, last_level_bell_decode
 
+"""
+Version of bayesian_update_pair! used in Steane EC decoder
+"""
+function bayesian_update_pair!(level_params, error_probs, bitflips, t)
+    anc_tensors = initialize_bare_errors(error_probs[2], bitflips[2]; error_leg=:closed)
+    sys_probs = [error_probs[1][1][1:t], error_probs[1][2][1:t], error_probs[1][3][1:t-1]]
+    sys_errs = [bitflips[1][1][1:t], bitflips[1][2][1:t], bitflips[1][3][1:t-1]]
+    sys_tensors = initialize_bare_errors(sys_probs, sys_errs; error_leg=:closed) 
+    open_sys_tensors = initialize_bare_errors(sys_probs, sys_errs; error_leg=:open)
+
+    nodes = vcat(sys_tensors, level_params.gate[1], anc_tensors, level_params.gate[2], fill(CHECK_NODE, 2^t))
+    @threads for i=1:length(sys_tensors)
+        idx = level_params.st_idxs[i] # spacetime index (error type, time, node index)
+	if error_probs[1][idx[1]][idx[2]][idx[3]][1]==0 || error_probs[1][idx[1]][idx[2]][idx[3]][1]==1 # frozen, don't bother updating
+	    continue
+	end
+        # get marginal probability of error
+	error_probs[1][idx[1]][idx[2]][idx[3]] = marginal_bayesian_update(nodes, open_sys_tensors[i], i, level_params.idxs, level_params.order)
+    end
+end
+
+"""
+Update error model on the "system side" given the interaction with ancillas whose error models are encoded in level_params.
+This is the version used in the stacked probability passing decoder, state prep gadget
+"""
 function bayesian_update_pair!(stacked_params::StackedBell, level_params::Array, error_probs::Array, bitflips::Array, tmax::Int)
     anc_times = stacked_params.times
     n_check_nodes = sum([2^i for i=anc_times])

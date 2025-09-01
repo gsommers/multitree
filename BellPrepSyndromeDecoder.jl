@@ -4,7 +4,7 @@ Module for decoding state preparation of GS multitree, using the Hadamarded repr
 with a local independent X/Z noise model.
 Reads in syndrome and erasure data from elsewhere.
 """
-module BellPrepSyndrome
+module BellPrepSyndromeDecoder
 
 # external code
 using Base.Threads
@@ -51,9 +51,7 @@ struct BellPrepParams
     end
 end
 
-"""
-Process data from circuit into blocks at different levels
-"""
+# Process data from circuit into blocks at different levels
 export process_syndrome, prepare_check_idxs, convert_outcomes, convert_outcomes_coherent
 
 function prepare_check_idxs(tmax)
@@ -121,9 +119,7 @@ function process_syndrome(outcomes, par_checks, tree_idxs, sub_idxs, check_times
     syndromes, (last_syndrome[end,end]==1)
 end
 
-"""
-Functions to initialize error probabilities, generate errors
-"""
+#Functions to initialize error probabilities, generate errors
 export prep_syndrome_decoder, add_measurement_erasures, initialize_error_prob_stacks
 
 """
@@ -369,7 +365,8 @@ end
 
 #= Decoding functions =#
 
-export level_bell_syndrome_decoder
+export level_bell_syndrome_decoder, run_level_bell_decoder
+
 """
 Master function to decode an instance with 
     - bell_params:BellParams: noiseless parameters of circuit
@@ -450,5 +447,6 @@ function get_index(arr; i::Int = 1)
         return arr[i]
     end
 end
+
 
 end # module
