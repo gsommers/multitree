@@ -23,11 +23,8 @@ function sample_sites(num_e, L::Int; fixed_n::Bool=true)
     sample_sites(num_e, [1:L;]; fixed_n = fixed_n)
 end
 
-"""
-Functions to get erasure locations, gate locations, in version with or without resetting
-"""
-export get_gate_idxs, get_system_idxs, get_erasure_sites, get_check_idxs, get_encoding_idxs, label_qubits
-
+# Functions to get erasure locations, gate locations, in version with or without resetting
+export get_gate_idxs, get_system_idxs, get_erasure_sites
 
 function get_erasure_blocks(rates, tmax)
     encoding_sites = [[sample_sites(rates[2] * 2^t, 2^t; fixed_n = false) for i=1:2^(tmax-t)] for t=1:tmax]
@@ -37,7 +34,9 @@ function get_erasure_blocks(rates, tmax)
     [input_sites, encoding_sites, check_sites, measure_sites]
 end
 
-# turn 1d array of sites to be erased, into 2d array of spacetime locations
+"""
+turn 1d array of sites to be erased, into 2d array of spacetime locations
+"""
 function get_erasure_sites(sites::Array, n_per_layer::Int, num_layers::Int)
     spacetime_sites = [Int[] for i=1:num_layers]
     for site in sites
@@ -162,16 +161,16 @@ function pair_blocks(stabs, erasure_sites, to_measure; check_gate::Bool = true, 
 end
     
 
-"""
-Prepare logical state 0 or +.
-"""
+
+#Prepare logical state 0 or +.
+
 export prep_state_fixed_n, prep_state_blocks, prep_state_blocks2
 
 """
 Version where I reset/feed back in measured qubits to keep a constant number,
 and try different versions of pairing blocks
 """
-function prep_state_blocks2(gate, tmax, rates, to_measure; input = :Z, log_state = :Z, measure_first::Int=1, erasure_sites = nothing, alternate::Bool = true)
+function prep_state_blocks(gate, tmax, rates, to_measure; input = :Z, log_state = :Z, measure_first::Int=1, erasure_sites = nothing, alternate::Bool = true)
     my_s = MixedDestabilizer(one(Stabilizer,1,basis=log_state)⊗one(Stabilizer,1,basis=input))
 
     entropies = [zeros(Int,2,2^(tmax-t-1)) for t=1:tmax-1]
@@ -263,7 +262,7 @@ end
 """
 Alternate version where I dynamically rewire and try all wirings every time (rather than stopping on success)
 """
-function prep_state_blocks(gate, tmax, rates, to_measure; input = :Z, log_state = :Z, measure_first::Int=1, erasure_sites = nothing, alternate::Bool = true)
+function prep_state_blocks2(gate, tmax, rates, to_measure; input = :Z, log_state = :Z, measure_first::Int=1, erasure_sites = nothing, alternate::Bool = true)
     my_s = MixedDestabilizer(one(Stabilizer,1,basis=log_state)⊗one(Stabilizer,1,basis=input))
 
     entropies = [zeros(Int,6,2^(tmax-t-1)) for t=1:tmax-1]
