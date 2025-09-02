@@ -136,28 +136,6 @@ struct StackedPerfectBell
 	new(last_level_params, stacked_nodes, par_checks, times[1:end-1])
     end
 end
-
-"""
-Number of error locations of each type, in each layer
-"""
-function get_classical_error_counts(t::Int; log_state::Int = 1, measure_first::Int = 1, measurement_error::Bool = true)
-    encoding_counts = [2^i for i=1:t]
-    check_counts = [2^i for i=1:t-1]
-    input_counts = zeros(Int, t)
-    for i=measure_first+1:2:t
-        input_counts[i] = 2^(i-1)
-    end
-    if log_state==1
-        input_counts[1] = 1
-    elseif measure_first == 2 # errors on both input legs
-        input_counts[1] = 2
-    end
-    if measurement_error
-        return [input_counts, encoding_counts, check_counts, [2^t]]
-    else
-        return [input_counts, encoding_counts, check_counts]
-    end
-end     
         
 # Syndrome matching/parity checks
 export prepare_par_check
@@ -180,6 +158,7 @@ function prepare_par_check(t; log_state::Int=1, measure_log::Bool = true)
 end
 
 # Gate nodes
+export make_gate_nodes, make_stacked_gate_nodes
 
 function make_gate_nodes(tmax; log_state::Int = 1, measure_first::Int = 1)
     make_gate_nodes(tmax, [2^(t-1) for t=1:tmax]; log_state = log_state, measure_first = measure_first)
@@ -238,7 +217,7 @@ function get_gate_node(t, measure_first; log_state::Int=1, log_type=:logical)
 end
 
 # Decoding
-export bayesian_update_pair!, last_level_bell_decode
+export marginal_bayesian_update, bayesian_update_pair!, last_level_bell_decode
 
 """
 Version of bayesian_update_pair! used in Steane EC decoder

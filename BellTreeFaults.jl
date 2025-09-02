@@ -18,6 +18,7 @@ const CHECK_NODE = dropdims(sum(CNOT_NODE, dims=1), dims=1)
 const NOTC_NODE = permutedims(CNOT_NODE,[2,1,4,3])
 const NOTC_GAUGE_NODE = dropdims(sum(NOTC_NODE,dims=2),dims=2)
 
+export make_error_node
 """
 Initialize error probabilities and bitflips
 erasure_f is not used here. Instead, probs[1] is unheralded, probs[2] heralded
@@ -200,6 +201,30 @@ function track_bell_error_probs(error_probs; parity::Int = 1, log_state::Int = 1
     end
     prop_probs
 end
+
+export get_classical_error_counts
+
+"""
+Number of error locations of each type, in each layer
+"""
+function get_classical_error_counts(t::Int; log_state::Int = 1, measure_first::Int = 1, measurement_error::Bool = true)
+    encoding_counts = [2^i for i=1:t]
+    check_counts = [2^i for i=1:t-1]
+    input_counts = zeros(Int, t)
+    for i=measure_first+1:2:t
+        input_counts[i] = 2^(i-1)
+    end
+    if log_state==1
+        input_counts[1] = 1
+    elseif measure_first == 2 # errors on both input legs
+        input_counts[1] = 2
+    end
+    if measurement_error
+        return [input_counts, encoding_counts, check_counts, [2^t]]
+    else
+        return [input_counts, encoding_counts, check_counts]
+    end
+end     
 
 # Error channels (classical)
 export evaluate_error, concatenate_channels

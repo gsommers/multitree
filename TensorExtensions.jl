@@ -22,9 +22,9 @@ Use this to avoid getting super tiny numbers in the TN contraction
 function normalize_mult(A, B)
   C = A * B
   # assumes all positive entries
-  sumC = sum(C)
-  @assert sumC != 0
-  C ./ sumC
+  maxC = maximum(C)
+  @assert maxC != 0
+  C ./ maxC
 end
 
 """

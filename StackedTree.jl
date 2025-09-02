@@ -68,7 +68,49 @@ end
 
 #= Make index lists for stacked or unstacked trees =#
 
-export make_bare_index_list, make_stacked_noisy_index_list
+export make_index_list, make_bare_index_list, make_stacked_noisy_index_list, make_stacked_syndrome_index_list
+
+"""
+For use in Steane syndrome extraction, stacked ancillas
+"""
+function make_stacked_syndrome_index_list(tmax::Int, anc_times; log_state::Int = 1, measure_first::Int = 1)
+    noisy_params = make_stacked_noisy_index_list(tmax, anc_times; log_state = log_state, open_logical = false, measure_first = measure_first, perfect_layer = 1, level = true)
+    nmax = noisy_params[:top_idxs][end][end]
+    
+    # the true "system idxs"
+    final_sys_idxs = [[i] for i=nmax+1:nmax+2^tmax]
+    # now tack on the last layer of gate/measurement errors on what ends up as the "ancilla"
+    final_anc_idxs = [[i] for i=nmax+2^tmax+1:nmax+2^(tmax+1)]
+    # and another layer of "top idxs"
+    top_idxs = [[noisy_params[:sys_idxs][2][end][i][end], final_sys_idxs[i][1], final_anc_idxs[i][1]] for i=1:2^tmax]
+
+    # these come first now
+    order = vcat([arr[end] for arr in top_idxs], vcat([arr[1:2] for arr in top_idxs]...))
+
+    push!(noisy_params[:sys_idxs][3], final_anc_idxs)
+    (sys_idxs = final_sys_idxs, state_prep_idxs = noisy_params[:sys_idxs], anc_idxs = noisy_params[:anc_idxs], top_idxs = vcat(noisy_params[:top_idxs], top_idxs), order = vcat(order, noisy_params[:order])) 
+end
+
+"""
+untrimmed tree index list - this allows for concatenated codes with b > 2, which we don't need here
+"""
+function make_index_list(t; base = 2, extra_layer::Bool = false)
+    index_list = Array{Array{Array{Int64}}}(undef, t+1+extra_layer)
+    index_list[1] = [vcat([-1], 1:base)]
+    start=1
+    for i=1:t-1
+        index_list[i+1] = [vcat([j + start], (1:base) .+ (start - 1 + base^i +  base*j)) for j=0:base^i-1]
+	start += base^i
+    end
+    if extra_layer # for inserting error locations on the outgoing legs
+        index_list[end-1] = [[n,n+base^t] for n=start:start+base^t-1]
+	index_list[end] = [[idx[2]] for idx in index_list[end-1]]
+    else
+        index_list[end] = [[n] for n=start:start+base^t-1]
+    end
+    index_list
+end
+
 
 function make_bare_index_list(tmax; measure_first::Int = 1, log_state::Int = 1, i::Int = 0)
     input_idxs, encoding_idxs, check_idxs, gate_idxs = make_system_index_list(tmax, zeros(Bool, tmax); n=1, log_state = log_state, level = true, measure_first = measure_first, i = i)
