@@ -40,6 +40,7 @@ function match_spacetime_syndrome(bitflips, par_checks)
 
     # last level: no ancillas, don't measure logical
     fresh_syndrome = par_checks[end][1:end-1,:] * bool_to_nemo(Bool.(mod.(myerr .+ prop_err, 2))[:,:])
+
     matching_errs[end] = nemo_to_bool(match_syndrome(par_checks[end][1:end-1,:], fresh_syndrome))[:,1]
 
     # now also see whether they have the same effect on logical or not
@@ -102,7 +103,7 @@ function level_bell_decoder(stacked_params::Array, final_params::StackedPerfectB
 
     err_s, comm_log = match_spacetime_syndrome([bitflips[i][end] for i=1:tmax], final_params.par_checks)
 
-    # first see what would happen if I tried decoding last level pretending errors only on system (i.e. not updating the error model at all)
+    # first see what would happen if I tried decoding last level pretending errors only on system and first order ancillas (but not updating the other ancillas at all)
     if save_start
         class_probs = last_level_bell_decode(final_params, level_params, [err_probs[i][end] for i=1:tmax], vcat([bitflips[i][end] for i=1:tmax-1], [err_s]))
     else
