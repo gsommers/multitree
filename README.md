@@ -24,7 +24,7 @@ The modules contained in `src/` fall into three broad groups:
 
  - Functions for (stacked) probability passing of the GS code:
    * Higher-level functions: `BellPrepErrorDecoder.jl` for classical simulations of state prep (generating error patterns on the fly, `BellPrepSyndromeDecoder.jl` for decoding state prep given a syndrome (used on experimental data), `BellMemoryDecoder.jl` for decoding the Steane EC gadget. `QuantinuumRuns.jl` calls functions in `BellPrepSyndromeDecoder.jl` to process raw data for Quantinuum System H2.
-   * Lower-level functions: `BellTreeFaults.jl` (propagating faults, initializing error nodes in the tensor network), `BellTreeTensors.jl` (basic data structures for the stacked decoder of state prep and probability passing decoder of EC; marginal updates of error propabilities), `StackedTree.jl` (tensor and index lists for stacked decoder), `PauliNoise.jl` (error tensors for Pauli channels, not specific to Bell tree)
+   * Lower-level functions: `BellTreeFaults.jl` (propagating faults, initializing error nodes in the tensor network), `BellTreeTensors.jl` (basic data structures for the stacked decoder of state prep and probability passing decoder of EC; marginal updates of error probabilities), `StackedTree.jl` (tensor and index lists for stacked decoder), `PauliNoise.jl` (error tensors for Pauli channels, not specific to Bell tree)
  - Functions for optimal decoding of fully heralded errors:
    * Higher-level functions: `SteaneRuns.jl`.
    * Lower-level functions: `SteanePrep.jl` (for state preparation) and `SteaneSyndrome.jl` (for syndrome extraction/Steane EC)
